@@ -92,7 +92,9 @@ def build_request_body(request_data: Any, nim: NimSettings) -> dict:
         extra_body, "repetition_penalty", nim.repetition_penalty, ignore_value=1.0
     )
     _set_extra(extra_body, "min_tokens", nim.min_tokens, ignore_value=0)
-    _set_extra(extra_body, "chat_template", nim.chat_template)
+    # Mistral models don't support chat_template
+    if "mistral" not in getattr(request_data, "model", "").lower():
+        _set_extra(extra_body, "chat_template", nim.chat_template)
     _set_extra(extra_body, "request_id", nim.request_id)
     _set_extra(extra_body, "return_tokens_as_token_ids", nim.return_tokens_as_token_ids)
     _set_extra(extra_body, "include_stop_str_in_output", nim.include_stop_str_in_output)
