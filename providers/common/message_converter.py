@@ -114,7 +114,7 @@ class AnthropicToOpenAIConverter:
 
     @staticmethod
     def _convert_user_message(content: list[Any]) -> list[dict[str, Any]]:
-        """Convert user message blocks (including tool results), preserving order."""
+        """Convert user message blocks (including tool results and images), preserving order."""
         result: list[dict[str, Any]] = []
         text_parts: list[str] = []
 
@@ -128,6 +128,26 @@ class AnthropicToOpenAIConverter:
 
             if block_type == "text":
                 text_parts.append(get_block_attr(block, "text", ""))
+            elif block_type == "image":
+                flush_text()
+                # Convert Anthropic image format to OpenAI format
+                source = get_block_attr(block, "source", {})
+                media_type = source.get("media_type", "image/jpeg") if isinstance(source, dict) else "image/jpeg"
+                data = source.get("data") or source.get("base64") or "" if isinstance(source, dict) else ""
+
+                if data:
+                    # OpenAI format for images
+                    result.append({
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{media_type};base64,{data}"
+                                }
+                            }
+                        ]
+                    })
             elif block_type == "tool_result":
                 flush_text()
                 tool_content = get_block_attr(block, "content", "")
