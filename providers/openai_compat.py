@@ -151,13 +151,22 @@ class OpenAICompatibleProvider(BaseProvider):
         input_tokens: int,
         request_id: str | None,
     ) -> AsyncIterator[str]:
-        """Shared streaming implementation."""
+        """Shared streaming implementation with API key rotation."""
         tag = self._provider_name
         message_id = f"msg_{uuid.uuid4()}"
         sse = SSEBuilder(message_id, request.model, input_tokens)
 
         body = self._build_request_body(request)
         req_tag = f" request_id={request_id}" if request_id else ""
+
+        # Rotate API key for this request (multi-key load balancing)
+        api_key = getattr(self, "_get_next_api_key", None)
+        if api_key:
+            current_key = api_key()
+            # Update client's API key for this request
+            self._client.api_key = current_key
+            logger.debug("{} using API key index: {}", tag, self._api_keys.index(current_key) if hasattr(self, '_api_keys') else 0)
+
         logger.info(
             "{}_STREAM:{} model={} msgs={} tools={}",
             tag,

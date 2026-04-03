@@ -74,7 +74,10 @@ def build_request_body(request_data: Any, nim: NimSettings) -> dict:
     # Handle thinking/reasoning mode
     resolved = getattr(request_data, "resolved_provider_model", "")
     is_mistral = "mistral" in resolved.lower()
-    if not is_mistral:
+    is_glm = "glm" in resolved.lower()
+
+    # GLM models don't support thinking/reasoning_split/chat_template_kwargs
+    if not is_mistral and not is_glm:
         extra_body.setdefault("thinking", {"type": "enabled"})
         extra_body.setdefault("reasoning_split", True)
         extra_body.setdefault(
@@ -95,15 +98,17 @@ def build_request_body(request_data: Any, nim: NimSettings) -> dict:
         extra_body, "repetition_penalty", nim.repetition_penalty, ignore_value=1.0
     )
     _set_extra(extra_body, "min_tokens", nim.min_tokens, ignore_value=0)
-    # Mistral models don't support chat_template
-    if not is_mistral:
-        _set_extra(extra_body, "chat_template", nim.chat_template)
-    _set_extra(extra_body, "request_id", nim.request_id)
-    _set_extra(extra_body, "return_tokens_as_token_ids", nim.return_tokens_as_token_ids)
-    _set_extra(extra_body, "include_stop_str_in_output", nim.include_stop_str_in_output)
-    _set_extra(extra_body, "ignore_eos", nim.ignore_eos)
-    _set_extra(extra_body, "reasoning_effort", nim.reasoning_effort)
-    _set_extra(extra_body, "include_reasoning", nim.include_reasoning)
+    # GLM models don't support these parameters
+    if not is_glm:
+        # Mistral models don't support chat_template
+        if not is_mistral:
+            _set_extra(extra_body, "chat_template", nim.chat_template)
+        _set_extra(extra_body, "request_id", nim.request_id)
+        _set_extra(extra_body, "return_tokens_as_token_ids", nim.return_tokens_as_token_ids)
+        _set_extra(extra_body, "include_stop_str_in_output", nim.include_stop_str_in_output)
+        _set_extra(extra_body, "ignore_eos", nim.ignore_eos)
+        _set_extra(extra_body, "reasoning_effort", nim.reasoning_effort)
+        _set_extra(extra_body, "include_reasoning", nim.include_reasoning)
 
     if extra_body:
         body["extra_body"] = extra_body
