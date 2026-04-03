@@ -95,8 +95,10 @@ class ContentBlockManager:
         except Exception:
             return None
 
-        if args_json.get("run_in_background") is not False:
-            args_json["run_in_background"] = False
+        # Allow run_in_background to be true for real subagent support
+        # Only force false if explicitly requested by provider limitations
+        if args_json.get("run_in_background") is None:
+            args_json["run_in_background"] = True  # Default to true for parallel execution
 
         state.task_args_emitted = True
         state.task_arg_buffer = ""
@@ -112,8 +114,9 @@ class ContentBlockManager:
             out = "{}"
             try:
                 args_json = json.loads(state.task_arg_buffer)
-                if args_json.get("run_in_background") is not False:
-                    args_json["run_in_background"] = False
+                # Allow run_in_background to be true for real subagent support
+                if args_json.get("run_in_background") is None:
+                    args_json["run_in_background"] = True  # Default to true
                 out = json.dumps(args_json)
             except Exception as e:
                 prefix = state.task_arg_buffer[:120]

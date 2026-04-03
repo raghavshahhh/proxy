@@ -248,10 +248,12 @@ class OpenAICompatibleProvider(BaseProvider):
                                         yield event
 
                                     block_idx = sse.blocks.allocate_index()
+                                    # Allow subagents to run in background (real parallel execution)
                                     if tool_use.get("name") == "Task" and isinstance(
                                         tool_use.get("input"), dict
                                     ):
-                                        tool_use["input"]["run_in_background"] = False
+                                        # Default to true for parallel subagent execution
+                                        tool_use["input"].setdefault("run_in_background", True)
                                     yield sse.content_block_start(
                                         block_idx,
                                         "tool_use",
@@ -325,10 +327,12 @@ class OpenAICompatibleProvider(BaseProvider):
                 id=tool_use["id"],
                 name=tool_use["name"],
             )
+            # Allow subagents to run in background (real parallel execution)
             if tool_use.get("name") == "Task" and isinstance(
                 tool_use.get("input"), dict
             ):
-                tool_use["input"]["run_in_background"] = False
+                # Default to true for parallel subagent execution
+                tool_use["input"].setdefault("run_in_background", True)
             yield sse.content_block_delta(
                 block_idx,
                 "input_json_delta",
