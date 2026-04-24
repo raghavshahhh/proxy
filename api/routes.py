@@ -145,6 +145,63 @@ async def health():
     return {"status": "healthy"}
 
 
+# Auth endpoints for Claude Code v2.1.119+ compatibility
+@router.get("/v1/organizations")
+async def organizations():
+    return [{"id": "org_ragspro", "name": "RAGSPRO", "role": "owner"}]
+
+
+@router.get("/v1/account")
+async def account():
+    return {
+        "id": "usr_ragspro",
+        "email": "ragsproai@gmail.com",
+        "name": "Raghav Shah",
+        "plan": "pro",
+        "organization": {"id": "org_ragspro", "name": "RAGSPRO"},
+    }
+
+
+@router.post("/v1/auth/token")
+async def auth_token():
+    return {"access_token": "freecc", "token_type": "bearer", "expires_in": 86400}
+
+
+@router.get("/v1/auth/session")
+async def auth_session():
+    return {"authenticated": True, "user_id": "usr_ragspro", "plan": "pro"}
+
+
+@router.post("/v1/organizations/{org_id}/api_keys")
+async def create_api_key(org_id: str):
+    return {"api_key": "freecc", "name": "ragscode"}
+
+
+@router.get("/v1/organizations/{org_id}/api_keys")
+async def list_api_keys(org_id: str):
+    return {"data": [{"id": "key_1", "name": "ragscode", "api_key": "freecc"}]}
+
+
+@router.post("/v1/messages/batches")
+async def message_batches():
+    return {"id": "batch_1", "status": "completed"}
+
+
+@router.get("/api/auth/session")
+async def api_auth_session():
+    return {"authenticated": True, "user_id": "usr_ragspro"}
+
+
+@router.get("/api/account")
+async def api_account():
+    return {"id": "usr_ragspro", "email": "ragsproai@gmail.com", "plan": "pro"}
+
+
+@router.get("/api/billing")
+async def api_billing():
+    return {"plan": "pro", "status": "active", "usage": {"tokens": 0, "limit": 999999999}}
+
+
 @router.post("/stop")
 async def stop_cli(request: Request):
     """Stop all CLI sessions and pending tasks."""

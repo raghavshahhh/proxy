@@ -21,8 +21,9 @@ class NvidiaNimProvider(OpenAICompatibleProvider):
         self._api_key_iterator = itertools.cycle(api_keys) if len(api_keys) > 1 else None
         self._api_keys = api_keys
         self._key_count = len(api_keys)
+        self._current_key_index = 0
 
-        # Use first key for initial client (will be rotated per-request)
+        # Use first key for initial client
         super().__init__(
             config,
             provider_name="NIM",
@@ -34,7 +35,9 @@ class NvidiaNimProvider(OpenAICompatibleProvider):
     def _get_next_api_key(self) -> str:
         """Get next API key in round-robin fashion."""
         if self._api_key_iterator:
-            return next(self._api_key_iterator)
+            key = next(self._api_key_iterator)
+            self._current_key_index = (self._current_key_index + 1) % self._key_count
+            return key
         return self._api_keys[0] if self._api_keys else ""
 
     def _build_request_body(self, request: Any) -> dict:

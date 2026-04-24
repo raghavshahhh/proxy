@@ -1,10 +1,28 @@
-INFO:     Started server process [11123]
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8082 (Press CTRL+C to quit)
-INFO:     127.0.0.1:51409 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51413 - "POST /v1/messages HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51420 - "POST /v1/messages HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51485 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51490 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51506 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+/opt/homebrew/opt/python@3.14/bin/python3.14: No module named uv
+INFO:     127.0.0.1:50894 - "HEAD / HTTP/1.1" 405 Method Not Allowed
+INFO:     127.0.0.1:51091 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51096 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51094 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51094 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51101 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51110 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51108 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51143 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51143 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51143 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51150 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51153 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51155 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51153 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51159 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51159 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51162 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51165 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51168 - "HEAD / HTTP/1.1" 405 Method Not Allowed
+INFO:     127.0.0.1:51165 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51165 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51198 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51198 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51200 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51200 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51200 - "POST /v1/messages?beta=true HTTP/1.1" 200 OK
