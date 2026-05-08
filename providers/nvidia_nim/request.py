@@ -68,7 +68,7 @@ def build_request_body(request_data: Any, nim: NimSettings) -> dict:
     # Handle non-standard parameters via extra_body
     extra_body: dict[str, Any] = {}
     request_extra = getattr(request_data, "extra_body", None)
-    if request_extra:
+    if request_extra and isinstance(request_extra, dict):
         extra_body.update(request_extra)
 
     # Handle thinking/reasoning mode
