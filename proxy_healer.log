@@ -1,5 +1,0 @@
-[2026-03-11 20:39:48] Proxy health check failed
-[2026-03-11 20:39:48] PROXY DOWN - Attempting fix...
-[2026-03-11 20:39:53] PROXY FIXED - PID: 55716
-8: 55702 Terminated: 15          pkill -f "uvicorn server:app" 2> /dev/null
-[2026-03-11 20:39:53] PROXY FIXED - PID: 55714

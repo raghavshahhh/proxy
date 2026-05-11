@@ -1,9 +1,48 @@
+# Environment
 .env
-ghp_*
+.venv/
 *.save
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets / SSH keys
+ghp_*
+
+# Logs
 *.log
+server.*.log
+
+# Runtime
+*.pid
+.proxy.pid
+.proxy.history
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude Code
 .claude/.session_active
 .claude/.current_project
 .claude/.checkpoint.pid
 .claude/agents/*.json
 .claude/telemetry/*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# tiktoken cache
+.tiktoken_cache/
+
+# UV cache
+.uv_cache/
+
+# Build artifacts
+dist/
+*.egg-info/

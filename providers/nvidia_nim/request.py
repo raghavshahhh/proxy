@@ -73,8 +73,8 @@ def build_request_body(request_data: Any, nim: NimSettings) -> dict:
 
     # Handle thinking/reasoning mode
     resolved = getattr(request_data, "resolved_provider_model", "")
-    is_mistral = "mistral" in resolved.lower() or "kimi" in resolved.lower()
-    is_glm = "glm" in resolved.lower() or "kimi" in resolved.lower()
+    is_mistral = "mistral" in resolved.lower()
+    is_glm = "glm" in resolved.lower()
 
     # GLM models don't support thinking/reasoning_split/chat_template_kwargs
     if not is_mistral and not is_glm:
