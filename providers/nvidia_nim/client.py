@@ -18,7 +18,9 @@ class NvidiaNimProvider(OpenAICompatibleProvider):
     def __init__(self, config: ProviderConfig, *, nim_settings: NimSettings):
         # Parse multiple API keys (comma-separated) for load balancing
         api_keys = [k.strip() for k in config.api_key.split(",") if k.strip()]
-        self._api_key_iterator = itertools.cycle(api_keys) if len(api_keys) > 1 else None
+        self._api_key_iterator = (
+            itertools.cycle(api_keys) if len(api_keys) > 1 else None
+        )
         self._api_keys = api_keys
         self._key_count = len(api_keys)
         self._current_key_index = 0

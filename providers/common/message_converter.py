@@ -132,28 +132,39 @@ class AnthropicToOpenAIConverter:
                 flush_text()
                 # Convert Anthropic image format to OpenAI format
                 source = get_block_attr(block, "source", {})
-                media_type = source.get("media_type", "image/jpeg") if isinstance(source, dict) else "image/jpeg"
-                data = source.get("data") or source.get("base64") or "" if isinstance(source, dict) else ""
+                media_type = (
+                    source.get("media_type", "image/jpeg")
+                    if isinstance(source, dict)
+                    else "image/jpeg"
+                )
+                data = (
+                    source.get("data") or source.get("base64") or ""
+                    if isinstance(source, dict)
+                    else ""
+                )
 
                 if data:
                     # OpenAI format for images
-                    result.append({
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{media_type};base64,{data}"
+                    result.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:{media_type};base64,{data}"
+                                    },
                                 }
-                            }
-                        ]
-                    })
+                            ],
+                        }
+                    )
             elif block_type == "tool_result":
                 flush_text()
                 tool_content = get_block_attr(block, "content", "")
                 if isinstance(tool_content, list):
                     tool_content = "\n".join(
-                        item.get("text", str(item)) if isinstance(item, dict)
+                        item.get("text", str(item))
+                        if isinstance(item, dict)
                         else getattr(item, "text", str(item))
                         for item in tool_content
                     )

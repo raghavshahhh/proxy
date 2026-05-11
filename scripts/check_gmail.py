@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Quick Gmail checker via IMAP."""
 
-import os
 import email
-from email.header import decode_header
 import imaplib
+import os
+from email.header import decode_header
 
 # You'll need to set these env vars or update manually
 IMAP_SERVER = "imap.gmail.com"
 EMAIL = os.environ.get("GMAIL_EMAIL", "")
 PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
+
 
 def check_gmail():
     if not EMAIL or not PASSWORD:
@@ -27,14 +28,21 @@ def check_gmail():
         mail.select("inbox")
 
         # Get recent emails
-        status, messages = mail.search(None, "ALL")
+        _status, messages = mail.search(None, "ALL")
         email_ids = messages[0].split()[-5:]  # Last 5 emails
 
         print(f"📧 Recent emails for {EMAIL}:\n")
 
         for eid in reversed(email_ids):
-            status, msg_data = mail.fetch(eid, "(RFC822)")
-            msg = email.message_from_bytes(msg_data[0][1])
+            _status, msg_data = mail.fetch(eid, "(RFC822)")
+            if msg_data and isinstance(msg_data[0], tuple) and len(msg_data[0]) > 1:
+                raw_email = msg_data[0][1]
+                if isinstance(raw_email, bytes):
+                    msg = email.message_from_bytes(raw_email)
+                else:
+                    continue
+            else:
+                continue
 
             # Subject
             subject = decode_header(msg["Subject"])[0][0]
@@ -53,6 +61,7 @@ def check_gmail():
 
     except Exception as e:
         print(f"Error: {e}")
+
 
 if __name__ == "__main__":
     check_gmail()

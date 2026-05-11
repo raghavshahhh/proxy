@@ -11,6 +11,17 @@ from loguru import logger
 from openai import AsyncOpenAI
 
 from providers.base import BaseProvider, ProviderConfig
+from providers.common import (
+    ContentType,
+    HeuristicToolParser,
+    SSEBuilder,
+    ThinkTagParser,
+    append_request_id,
+    get_user_facing_error_message,
+    map_error,
+    map_stop_reason,
+)
+from providers.rate_limit import GlobalRateLimiter
 
 # Shared HTTP client for connection pooling
 _http_client: httpx.AsyncClient | None = None
@@ -29,17 +40,6 @@ def _get_shared_http_client() -> httpx.AsyncClient:
             http2=True,
         )
     return _http_client
-from providers.common import (
-    ContentType,
-    HeuristicToolParser,
-    SSEBuilder,
-    ThinkTagParser,
-    append_request_id,
-    get_user_facing_error_message,
-    map_error,
-    map_stop_reason,
-)
-from providers.rate_limit import GlobalRateLimiter
 
 
 class OpenAICompatibleProvider(BaseProvider):
@@ -165,7 +165,14 @@ class OpenAICompatibleProvider(BaseProvider):
             current_key = api_key()
             # Update client's API key for this request
             self._client.api_key = current_key
-            logger.debug("{} using API key index: {}", tag, self._api_keys.index(current_key) if hasattr(self, '_api_keys') else 0)
+            if hasattr(self, "_api_keys") and isinstance(self._api_keys, list):
+                try:
+                    key_index = self._api_keys.index(current_key)
+                    logger.debug("{} using API key index: {}", tag, key_index)
+                except ValueError:
+                    logger.debug("{} using API key index: 0", tag)
+            else:
+                logger.debug("{} using API key index: 0", tag)
 
         logger.info(
             "{}_STREAM:{} model={} msgs={} tools={}",
@@ -223,7 +230,9 @@ class OpenAICompatibleProvider(BaseProvider):
                         _raw = delta.content
                         if isinstance(_raw, list):
                             _raw = "".join(
-                                item.get("text", str(item)) if isinstance(item, dict) else str(item)
+                                item.get("text", str(item))
+                                if isinstance(item, dict)
+                                else str(item)
                                 for item in _raw
                             )
                         elif not isinstance(_raw, str):
@@ -253,7 +262,9 @@ class OpenAICompatibleProvider(BaseProvider):
                                         tool_use.get("input"), dict
                                     ):
                                         # Default to true for parallel subagent execution
-                                        tool_use["input"].setdefault("run_in_background", True)
+                                        tool_use["input"].setdefault(
+                                            "run_in_background", True
+                                        )
                                     yield sse.content_block_start(
                                         block_idx,
                                         "tool_use",

@@ -98,7 +98,9 @@ class ContentBlockManager:
         # Allow run_in_background to be true for real subagent support
         # Only force false if explicitly requested by provider limitations
         if args_json.get("run_in_background") is None:
-            args_json["run_in_background"] = True  # Default to true for parallel execution
+            args_json["run_in_background"] = (
+                True  # Default to true for parallel execution
+            )
 
         state.task_args_emitted = True
         state.task_arg_buffer = ""

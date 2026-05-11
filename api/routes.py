@@ -127,15 +127,55 @@ async def list_models():
     return {
         "object": "list",
         "data": [
-            {"id": "claude-opus-4-6", "object": "model", "created": 1709596800, "owned_by": "anthropic"},
-            {"id": "claude-sonnet-4-6", "object": "model", "created": 1709596800, "owned_by": "anthropic"},
-            {"id": "claude-haiku-4-5", "object": "model", "created": 1709596800, "owned_by": "anthropic"},
-            {"id": "claude-3-opus", "object": "model", "created": 1709596800, "owned_by": "anthropic"},
-            {"id": "claude-3-5-sonnet-20241022", "object": "model", "created": 1709596800, "owned_by": "anthropic"},
-            {"id": "claude-3-5-sonnet", "object": "model", "created": 1709596800, "owned_by": "anthropic"},
-            {"id": "claude-3-5-haiku-20241022", "object": "model", "created": 1709596800, "owned_by": "anthropic"},
-            {"id": "claude-3-haiku", "object": "model", "created": 1709596800, "owned_by": "anthropic"},
-        ]
+            {
+                "id": "claude-opus-4-6",
+                "object": "model",
+                "created": 1709596800,
+                "owned_by": "anthropic",
+            },
+            {
+                "id": "claude-sonnet-4-6",
+                "object": "model",
+                "created": 1709596800,
+                "owned_by": "anthropic",
+            },
+            {
+                "id": "claude-haiku-4-5",
+                "object": "model",
+                "created": 1709596800,
+                "owned_by": "anthropic",
+            },
+            {
+                "id": "claude-3-opus",
+                "object": "model",
+                "created": 1709596800,
+                "owned_by": "anthropic",
+            },
+            {
+                "id": "claude-3-5-sonnet-20241022",
+                "object": "model",
+                "created": 1709596800,
+                "owned_by": "anthropic",
+            },
+            {
+                "id": "claude-3-5-sonnet",
+                "object": "model",
+                "created": 1709596800,
+                "owned_by": "anthropic",
+            },
+            {
+                "id": "claude-3-5-haiku-20241022",
+                "object": "model",
+                "created": 1709596800,
+                "owned_by": "anthropic",
+            },
+            {
+                "id": "claude-3-haiku",
+                "object": "model",
+                "created": 1709596800,
+                "owned_by": "anthropic",
+            },
+        ],
     }
 
 
@@ -199,7 +239,11 @@ async def api_account():
 
 @router.get("/api/billing")
 async def api_billing():
-    return {"plan": "pro", "status": "active", "usage": {"tokens": 0, "limit": 999999999}}
+    return {
+        "plan": "pro",
+        "status": "active",
+        "usage": {"tokens": 0, "limit": 999999999},
+    }
 
 
 @router.post("/stop")

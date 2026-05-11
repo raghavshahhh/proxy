@@ -60,7 +60,9 @@ class Settings(BaseSettings):
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
 
     # ==================== Provider Rate Limiting ====================
-    provider_rate_limit: int = Field(default=100, validation_alias="PROVIDER_RATE_LIMIT")
+    provider_rate_limit: int = Field(
+        default=100, validation_alias="PROVIDER_RATE_LIMIT"
+    )
     provider_rate_window: int = Field(
         default=60, validation_alias="PROVIDER_RATE_WINDOW"
     )
