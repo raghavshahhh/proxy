@@ -42,6 +42,7 @@ def _get_shared_http_client() -> httpx.AsyncClient:
     return _http_client
 
 
+
 class OpenAICompatibleProvider(BaseProvider):
     """Base class for providers using OpenAI-compatible chat completions API."""
 

@@ -1,6 +1,8 @@
 # Environment
 .env
+.env.backup
 .venv/
+.venv_test/
 *.save
 
 # Python
@@ -32,6 +34,8 @@ server.*.log
 .claude/.checkpoint.pid
 .claude/agents/*.json
 .claude/telemetry/*.log
+.claude/commands/
+.claude/context.md
 
 # OS
 .DS_Store
@@ -43,6 +47,17 @@ Thumbs.db
 # UV cache
 .uv_cache/
 
+# Ruff cache
+.ruff_cache/
+
 # Build artifacts
 dist/
 *.egg-info/
+
+# Proxy subdirectory (separate clone)
+proxy/
+
+# Misc
+.remember/
+*.png
+.pytest_cache/
