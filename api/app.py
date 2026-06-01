@@ -191,3 +191,6 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
 def create_asgi_app() -> GracefulLifespanApp:
     """Create the server ASGI app with graceful lifespan failure reporting."""
     return GracefulLifespanApp(create_app(lifespan_enabled=False))
+
+# Module-level app instance for uv run
+app = create_app()
