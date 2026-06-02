@@ -1,19 +1,46 @@
 """Global rate limiter for API requests."""
 
-from __future__ import annotations
-
 import asyncio
 import random
 import time
-from collections import deque
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, ClassVar, TypeVar
 
+import httpx
 import openai
 from loguru import logger
 
+from core.rate_limit import StrictSlidingWindowLimiter
+from core.trace import trace_event
+
 T = TypeVar("T")
+
+
+def _upstream_http_retryable(code: int) -> bool:
+    """True for rate limit / upstream server failures that should backoff-retry."""
+    return code == 429 or 500 <= code <= 599
+
+
+def retryable_upstream_status(exc: BaseException) -> int | None:
+    """Return HTTP-like status codes that qualify for reactive backoff retries.
+
+    ``429`` plus any upstream ``5xx`` use the same exponential backoff and scoped
+    limiter blocking semantics as today's rate-limit path.
+    """
+    if isinstance(exc, openai.RateLimitError):
+        return 429
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if _upstream_http_retryable(status):
+            return status
+        return None
+    if isinstance(exc, openai.APIError):
+        status = getattr(exc, "status_code", None)
+        if isinstance(status, int) and 500 <= status <= 599:
+            return status
+        return None
+    return None
 
 
 class GlobalRateLimiter:
@@ -26,17 +53,12 @@ class GlobalRateLimiter:
     may be open simultaneously, independent of the sliding window.
 
     Proactive limits - throttles requests to stay within API limits.
-    Reactive limits - pauses all requests when a 429 is hit.
+    Reactive limits - pauses all requests when a 429 or 5xx retry backoff is active.
     Concurrency limit - caps simultaneously open streams.
     """
 
     _instance: ClassVar[GlobalRateLimiter | None] = None
-
-    def __new__(cls, *args: Any, **kwargs: Any) -> GlobalRateLimiter:
-        if cls._instance is not None:
-            return cls._instance
-        instance = super().__new__(cls)
-        return instance
+    _scoped_instances: ClassVar[dict[str, GlobalRateLimiter]] = {}
 
     def __init__(
         self,
@@ -57,10 +79,11 @@ class GlobalRateLimiter:
 
         self._rate_limit = rate_limit
         self._rate_window = float(rate_window)
-        # Monotonic timestamps of the last granted slots.
-        self._request_times: deque[float] = deque()
+        self._max_concurrency = max_concurrency
+        self._proactive_limiter = StrictSlidingWindowLimiter(
+            self._rate_limit, self._rate_window
+        )
         self._blocked_until: float = 0
-        self._lock = asyncio.Lock()
         self._concurrency_sem = asyncio.Semaphore(max_concurrency)
         self._initialized = True
 
@@ -91,9 +114,40 @@ class GlobalRateLimiter:
         return cls._instance
 
     @classmethod
+    def get_scoped_instance(
+        cls,
+        scope: str,
+        *,
+        rate_limit: int | None = None,
+        rate_window: float | None = None,
+        max_concurrency: int = 5,
+    ) -> GlobalRateLimiter:
+        """Get or create a provider-scoped limiter instance."""
+        if not scope:
+            raise ValueError("scope must be non-empty")
+        desired_rate_limit = rate_limit or 40
+        desired_rate_window = float(rate_window or 60.0)
+        existing = cls._scoped_instances.get(scope)
+        if existing and existing.matches_config(
+            desired_rate_limit, desired_rate_window, max_concurrency
+        ):
+            return existing
+        if existing:
+            logger.info(
+                "Rebuilding provider rate limiter for updated scope '{}'", scope
+            )
+        cls._scoped_instances[scope] = cls(
+            rate_limit=desired_rate_limit,
+            rate_window=desired_rate_window,
+            max_concurrency=max_concurrency,
+        )
+        return cls._scoped_instances[scope]
+
+    @classmethod
     def reset_instance(cls) -> None:
         """Reset singleton (for testing)."""
         cls._instance = None
+        cls._scoped_instances = {}
 
     async def wait_if_blocked(self) -> bool:
         """
@@ -102,7 +156,7 @@ class GlobalRateLimiter:
         Returns:
             True if was reactively blocked and waited, False otherwise.
         """
-        # 1. Reactive check: Wait if someone hit a 429
+        # 1. Reactive check: Wait if someone hit a reactive backoff (429/5xx retries)
         waited_reactively = False
         now = time.monotonic()
         if now < self._blocked_until:
@@ -124,27 +178,7 @@ class GlobalRateLimiter:
         Guarantees: at most `self._rate_limit` acquisitions in any interval of length
         `self._rate_window` (seconds).
         """
-        while True:
-            wait_time = 0.0
-            async with self._lock:
-                now = time.monotonic()
-                cutoff = now - self._rate_window
-
-                while self._request_times and self._request_times[0] <= cutoff:
-                    self._request_times.popleft()
-
-                if len(self._request_times) < self._rate_limit:
-                    self._request_times.append(now)
-                    return
-
-                oldest = self._request_times[0]
-                wait_time = max(0.0, (oldest + self._rate_window) - now)
-
-            # Sleep outside the lock so other tasks can continue to queue.
-            if wait_time > 0:
-                await asyncio.sleep(wait_time)
-            else:
-                await asyncio.sleep(0)
+        await self._proactive_limiter.acquire()
 
     def set_blocked(self, seconds: float = 60) -> None:
         """
@@ -159,6 +193,16 @@ class GlobalRateLimiter:
     def is_blocked(self) -> bool:
         """Check if currently reactively blocked."""
         return time.monotonic() < self._blocked_until
+
+    def matches_config(
+        self, rate_limit: int, rate_window: float, max_concurrency: int
+    ) -> bool:
+        """Return whether this limiter matches the requested runtime config."""
+        return (
+            self._rate_limit == rate_limit
+            and self._rate_window == float(rate_window)
+            and self._max_concurrency == max_concurrency
+        )
 
     def remaining_wait(self) -> float:
         """Get remaining reactive wait time in seconds."""
@@ -186,10 +230,11 @@ class GlobalRateLimiter:
         jitter: float = 1.0,
         **kwargs: Any,
     ) -> Any:
-        """Execute an async callable with rate limiting and retry on 429.
+        """Execute an async callable with rate limiting and retry on transient limits.
 
-        Waits for the proactive limiter before each attempt. On 429, applies
-        exponential backoff with jitter before retrying.
+        Waits for the proactive limiter before each attempt. On ``429`` (rate limit)
+        or upstream ``5xx`` server errors, applies exponential backoff with jitter
+        and sets the reactive block before retrying.
 
         Args:
             fn: Async callable to execute.
@@ -205,25 +250,51 @@ class GlobalRateLimiter:
             The last exception if all retries are exhausted.
         """
         last_exc: Exception | None = None
+        total_attempts = 1 + max_retries
 
-        for attempt in range(1 + max_retries):
+        for attempt in range(total_attempts):
             await self.wait_if_blocked()
 
             try:
                 return await fn(*args, **kwargs)
-            except openai.RateLimitError as e:
+            except Exception as e:
+                status = retryable_upstream_status(e)
+                if status is None:
+                    raise
+
+                label = (
+                    "Rate limited (429)"
+                    if status == 429
+                    else f"Upstream server error ({status})"
+                )
                 last_exc = e
                 if attempt >= max_retries:
                     logger.warning(
-                        f"Rate limit retry exhausted after {max_retries} retries"
+                        "{} retry exhausted after {} retries (attempts={})",
+                        label,
+                        max_retries,
+                        total_attempts,
                     )
                     break
 
                 delay = min(base_delay * (2**attempt), max_delay)
                 delay += random.uniform(0, jitter)
+                attempt_no = attempt + 1
                 logger.warning(
-                    f"Rate limited (429), attempt {attempt + 1}/{max_retries + 1}. "
-                    f"Retrying in {delay:.1f}s..."
+                    "{}, attempt {}/{}. Retrying in {:.1f}s...",
+                    label,
+                    attempt_no,
+                    total_attempts,
+                    delay,
+                )
+                trace_event(
+                    stage="provider",
+                    event="provider.retry.scheduled",
+                    source="provider",
+                    status_code=status,
+                    attempt=attempt_no,
+                    max_attempts=total_attempts,
+                    delay_s=round(delay, 3),
                 )
                 self.set_blocked(delay)
                 await asyncio.sleep(delay)

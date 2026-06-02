@@ -1,47 +1,91 @@
-"""NVIDIA NIM provider implementation with multi-key load balancing."""
+"""NVIDIA NIM provider implementation."""
 
-import itertools
+import json
 from typing import Any
+
+import openai
+from loguru import logger
 
 from config.nim import NimSettings
 from providers.base import ProviderConfig
-from providers.openai_compat import OpenAICompatibleProvider
+from providers.defaults import NVIDIA_NIM_DEFAULT_BASE
+from providers.openai_compat import OpenAIChatTransport
 
-from .request import build_request_body
+from .request import (
+    body_without_nim_tool_argument_aliases,
+    build_request_body,
+    clone_body_without_chat_template,
+    clone_body_without_reasoning_budget,
+    clone_body_without_reasoning_content,
+    nim_tool_argument_aliases_from_body,
+)
 
-NVIDIA_NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
 
-
-class NvidiaNimProvider(OpenAICompatibleProvider):
-    """NVIDIA NIM provider with multi-key round-robin load balancing."""
+class NvidiaNimProvider(OpenAIChatTransport):
+    """NVIDIA NIM provider using official OpenAI client."""
 
     def __init__(self, config: ProviderConfig, *, nim_settings: NimSettings):
-        # Parse multiple API keys (comma-separated) for load balancing
-        api_keys = [k.strip() for k in config.api_key.split(",") if k.strip()]
-        self._api_key_iterator = (
-            itertools.cycle(api_keys) if len(api_keys) > 1 else None
-        )
-        self._api_keys = api_keys
-        self._key_count = len(api_keys)
-        self._current_key_index = 0
-
-        # Use first key for initial client
         super().__init__(
             config,
             provider_name="NIM",
-            base_url=config.base_url or NVIDIA_NIM_BASE_URL,
-            api_key=api_keys[0] if api_keys else config.api_key,
+            base_url=config.base_url or NVIDIA_NIM_DEFAULT_BASE,
+            api_key=config.api_key,
         )
         self._nim_settings = nim_settings
 
-    def _get_next_api_key(self) -> str:
-        """Get next API key in round-robin fashion."""
-        if self._api_key_iterator:
-            key = next(self._api_key_iterator)
-            self._current_key_index = (self._current_key_index + 1) % self._key_count
-            return key
-        return self._api_keys[0] if self._api_keys else ""
-
-    def _build_request_body(self, request: Any) -> dict:
+    def _build_request_body(
+        self, request: Any, thinking_enabled: bool | None = None
+    ) -> dict:
         """Internal helper for tests and shared building."""
-        return build_request_body(request, self._nim_settings)
+        return build_request_body(
+            request,
+            self._nim_settings,
+            thinking_enabled=self._is_thinking_enabled(request, thinking_enabled),
+        )
+
+    def _prepare_create_body(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Strip private request metadata before calling NVIDIA NIM."""
+        return body_without_nim_tool_argument_aliases(body)
+
+    def _tool_argument_aliases(self, body: dict[str, Any]) -> dict[str, dict[str, str]]:
+        """Return NIM tool argument aliases captured while building this request."""
+        return nim_tool_argument_aliases_from_body(body)
+
+    def _get_retry_request_body(self, error: Exception, body: dict) -> dict | None:
+        """Retry once with a downgraded body when NIM rejects a known field."""
+        status_code = getattr(error, "status_code", None)
+        if not isinstance(error, openai.BadRequestError) and status_code != 400:
+            return None
+
+        error_text = str(error)
+        error_body = getattr(error, "body", None)
+        if error_body is not None:
+            error_text = f"{error_text} {json.dumps(error_body, default=str)}"
+        error_text = error_text.lower()
+
+        if "reasoning_budget" in error_text:
+            retry_body = clone_body_without_reasoning_budget(body)
+            if retry_body is None:
+                return None
+            logger.warning(
+                "NIM_STREAM: retrying without reasoning_budget after 400 error"
+            )
+            return retry_body
+
+        if "chat_template" in error_text:
+            retry_body = clone_body_without_chat_template(body)
+            if retry_body is None:
+                return None
+            logger.warning("NIM_STREAM: retrying without chat_template after 400 error")
+            return retry_body
+
+        if "reasoning_content" in error_text:
+            retry_body = clone_body_without_reasoning_content(body)
+            if retry_body is None:
+                return None
+            logger.warning(
+                "NIM_STREAM: retrying without reasoning_content after 400 error"
+            )
+            return retry_body
+
+        return None
