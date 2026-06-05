@@ -48,11 +48,6 @@ def _configured_env_files(model_config: Mapping[str, Any]) -> tuple[Path, ...]:
     return tuple(Path(item) for item in configured)
 
 
-def _env_file_contains_key(path: Path, key: str) -> bool:
-    """Check whether a dotenv-style file defines the given key."""
-    return _env_file_value(path, key) is not None
-
-
 def _env_file_value(path: Path, key: str) -> str | None:
     """Return a dotenv value when the file explicitly defines the key."""
     if not path.is_file():
@@ -79,36 +74,17 @@ def _env_file_override(model_config: Mapping[str, Any], key: str) -> str | None:
     return configured_value
 
 
-def _removed_env_var_message(model_config: Mapping[str, Any]) -> str | None:
-    """Return a migration error for removed env vars, if present."""
-    removed_keys = ("NIM_ENABLE_THINKING", "ENABLE_THINKING")
-    replacement = (
-        "ENABLE_MODEL_THINKING, ENABLE_OPUS_THINKING, "
-        "ENABLE_SONNET_THINKING, or ENABLE_HAIKU_THINKING"
-    )
-
-    for removed_key in removed_keys:
-        if removed_key in os.environ:
-            return (
-                f"{removed_key} has been removed in this release. "
-                f"Rename it to {replacement}."
-            )
-
-        for env_file in _configured_env_files(model_config):
-            if _env_file_contains_key(env_file, removed_key):
-                return (
-                    f"{removed_key} has been removed in this release. "
-                    f"Rename it to {replacement}. Found in {env_file}."
-                )
-
-    return None
-
-
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     # ==================== OpenRouter Config ====================
     open_router_api_key: str = Field(default="", validation_alias="OPENROUTER_API_KEY")
+
+    # ==================== Mistral La Plateforme ====================
+    mistral_api_key: str = Field(default="", validation_alias="MISTRAL_API_KEY")
+
+    # ==================== Mistral Codestral (codestral.mistral.ai) ====================
+    codestral_api_key: str = Field(default="", validation_alias="CODESTRAL_API_KEY")
 
     # ==================== DeepSeek Config ====================
     deepseek_api_key: str = Field(default="", validation_alias="DEEPSEEK_API_KEY")
@@ -119,7 +95,8 @@ class Settings(BaseSettings):
     # ==================== Wafer Config ====================
     wafer_api_key: str = Field(default="", validation_alias="WAFER_API_KEY")
 
-    # ==================== OpenCode Zen Config ====================
+    # ==================== OpenCode Zen / OpenCode Go ====================
+    # Same key from opencode.ai/auth; zen uses prefix ``opencode/``, Go uses ``opencode_go/``.
     opencode_api_key: str = Field(default="", validation_alias="OPENCODE_API_KEY")
 
     # ==================== Z.ai Config ====================
@@ -127,6 +104,15 @@ class Settings(BaseSettings):
 
     # ==================== Fireworks AI Config ====================
     fireworks_api_key: str = Field(default="", validation_alias="FIREWORKS_API_KEY")
+
+    # ==================== Google Gemini (Google AI Studio) ====================
+    gemini_api_key: str = Field(default="", validation_alias="GEMINI_API_KEY")
+
+    # ==================== Groq (OpenAI-compatible) ====================
+    groq_api_key: str = Field(default="", validation_alias="GROQ_API_KEY")
+
+    # ==================== Cerebras Inference (OpenAI-compatible) ====================
+    cerebras_api_key: str = Field(default="", validation_alias="CEREBRAS_API_KEY")
 
     # ==================== Messaging Platform Selection ====================
     # Valid: "telegram" | "discord" | "none"
@@ -164,7 +150,7 @@ class Settings(BaseSettings):
     # ==================== Model ====================
     # All Claude model requests are mapped to this single model (fallback)
     # Format: provider_type/model/name
-    model: str = "nvidia_nim/z-ai/glm4.7"
+    model: str = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
 
     # Per-model overrides (optional, falls back to MODEL)
     # Each can use a different provider
@@ -175,13 +161,19 @@ class Settings(BaseSettings):
     # ==================== Per-Provider Proxy ====================
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
     open_router_proxy: str = Field(default="", validation_alias="OPENROUTER_PROXY")
+    mistral_proxy: str = Field(default="", validation_alias="MISTRAL_PROXY")
+    codestral_proxy: str = Field(default="", validation_alias="CODESTRAL_PROXY")
     lmstudio_proxy: str = Field(default="", validation_alias="LMSTUDIO_PROXY")
     llamacpp_proxy: str = Field(default="", validation_alias="LLAMACPP_PROXY")
     kimi_proxy: str = Field(default="", validation_alias="KIMI_PROXY")
     wafer_proxy: str = Field(default="", validation_alias="WAFER_PROXY")
     opencode_proxy: str = Field(default="", validation_alias="OPENCODE_PROXY")
+    opencode_go_proxy: str = Field(default="", validation_alias="OPENCODE_GO_PROXY")
     zai_proxy: str = Field(default="", validation_alias="ZAI_PROXY")
     fireworks_proxy: str = Field(default="", validation_alias="FIREWORKS_PROXY")
+    gemini_proxy: str = Field(default="", validation_alias="GEMINI_PROXY")
+    groq_proxy: str = Field(default="", validation_alias="GROQ_PROXY")
+    cerebras_proxy: str = Field(default="", validation_alias="CEREBRAS_PROXY")
 
     # ==================== Provider Rate Limiting ====================
     provider_rate_limit: int = Field(default=40, validation_alias="PROVIDER_RATE_LIMIT")
@@ -310,14 +302,6 @@ class Settings(BaseSettings):
     anthropic_auth_token: str = Field(
         default="", validation_alias="ANTHROPIC_AUTH_TOKEN"
     )
-
-    @model_validator(mode="before")
-    @classmethod
-    def reject_removed_env_vars(cls, data: Any) -> Any:
-        """Fail fast when removed environment variables are still configured."""
-        if message := _removed_env_var_message(cls.model_config):
-            raise ValueError(message)
-        return data
 
     # Handle empty strings for optional string fields
     @field_validator(

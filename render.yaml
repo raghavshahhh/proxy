@@ -10,9 +10,13 @@ services:
     envVars:
       - key: NVIDIA_NIM_API_KEY
         sync: false
+      - key: OPENCODE_API_KEY
+        sync: false
       - key: HOST
         value: 0.0.0.0
       - key: PORT
         value: "8082"
       - key: PYTHON_VERSION
         value: "3.14.0"
+      - key: FCC_OPEN_BROWSER
+        value: "false"

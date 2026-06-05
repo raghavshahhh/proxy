@@ -1,163 +1,216 @@
-from unittest.mock import patch
-
-import pytest
-
 from api.models.anthropic import Message, MessagesRequest, TokenCountRequest
-from config.settings import Settings
 
 
-@pytest.fixture
-def mock_settings():
-    settings = Settings()
-    settings.model = "nvidia_nim/target-model-from-settings"
-    settings.model_opus = None
-    settings.model_sonnet = None
-    settings.model_haiku = None
-    return settings
+def test_messages_request_parses_without_model_mapping_side_effects():
+    request = MessagesRequest(
+        model="claude-3-opus",
+        max_tokens=100,
+        messages=[Message(role="user", content="hello")],
+    )
+
+    assert request.model == "claude-3-opus"
 
 
-def test_messages_request_map_model_claude_to_default(mock_settings):
-    with patch("api.models.anthropic.get_settings", return_value=mock_settings):
-        request = MessagesRequest(
-            model="claude-3-opus",
-            max_tokens=100,
-            messages=[Message(role="user", content="hello")],
-        )
+def test_messages_request_normalizes_system_role_messages():
+    request = MessagesRequest.model_validate(
+        {
+            "model": "claude-3-opus",
+            "max_tokens": 100,
+            "messages": [
+                {"role": "user", "content": "first"},
+                {"role": "system", "content": "system prompt"},
+                {"role": "user", "content": "second"},
+            ],
+        }
+    )
 
-        assert request.model == "target-model-from-settings"
-        assert request.original_model == "claude-3-opus"
-
-
-def test_messages_request_map_model_with_provider_prefix(mock_settings):
-    with patch("api.models.anthropic.get_settings", return_value=mock_settings):
-        request = MessagesRequest(
-            model="anthropic/claude-3-haiku",
-            max_tokens=100,
-            messages=[Message(role="user", content="hello")],
-        )
-
-        assert request.model == "target-model-from-settings"
+    assert [message.role for message in request.messages] == ["user", "user"]
+    assert request.system == "system prompt"
 
 
-def test_token_count_request_model_validation(mock_settings):
-    with patch("api.models.anthropic.get_settings", return_value=mock_settings):
-        request = TokenCountRequest(
-            model="claude-3-sonnet", messages=[Message(role="user", content="hello")]
-        )
+def test_messages_request_merges_system_role_messages_with_existing_system():
+    request = MessagesRequest.model_validate(
+        {
+            "model": "claude-3-opus",
+            "max_tokens": 100,
+            "system": "existing system",
+            "messages": [
+                {"role": "system", "content": "message system"},
+                {"role": "user", "content": "hello"},
+            ],
+        }
+    )
 
-        assert request.model == "target-model-from-settings"
-
-
-def test_messages_request_model_mapping_logs(mock_settings):
-    with (
-        patch("api.models.anthropic.get_settings", return_value=mock_settings),
-        patch("api.models.anthropic.logger.debug") as mock_log,
-    ):
-        MessagesRequest(
-            model="claude-2.1",
-            max_tokens=100,
-            messages=[Message(role="user", content="hello")],
-        )
-
-        mock_log.assert_called()
-        args = mock_log.call_args[0][0]
-        assert "MODEL MAPPING" in args
-        assert "claude-2.1" in args
-        assert "target-model-from-settings" in args
+    assert len(request.messages) == 1
+    assert request.system == "existing system\n\nmessage system"
 
 
-def test_messages_request_resolved_provider_model_default(mock_settings):
-    """resolved_provider_model is set to the full model string."""
-    with patch("api.models.anthropic.get_settings", return_value=mock_settings):
-        request = MessagesRequest(
-            model="claude-3-opus",
-            max_tokens=100,
-            messages=[Message(role="user", content="hello")],
-        )
-        assert (
-            request.resolved_provider_model == "nvidia_nim/target-model-from-settings"
-        )
+def test_messages_request_preserves_system_block_cache_control_when_normalizing():
+    request = MessagesRequest.model_validate(
+        {
+            "model": "claude-3-opus",
+            "max_tokens": 100,
+            "system": [
+                {
+                    "type": "text",
+                    "text": "existing system",
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            "messages": [
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "message system",
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                },
+                {"role": "user", "content": "hello"},
+            ],
+        }
+    )
+
+    assert len(request.messages) == 1
+    assert isinstance(request.system, list)
+    assert [block.text for block in request.system] == [
+        "existing system",
+        "message system",
+    ]
+    assert request.system[0].model_dump()["cache_control"] == {"type": "ephemeral"}
+    assert request.system[1].model_dump()["cache_control"] == {"type": "ephemeral"}
 
 
-def test_messages_request_model_aware_opus_override():
-    """Opus model routes to MODEL_OPUS when set."""
-    settings = Settings()
-    settings.model = "nvidia_nim/fallback-model"
-    settings.model_opus = "open_router/deepseek/deepseek-r1"
+def test_messages_request_ignores_internal_routing_fields_when_supplied():
+    request = MessagesRequest.model_validate(
+        {
+            "model": "target-model",
+            "original_model": "claude-3-opus",
+            "resolved_provider_model": "nvidia_nim/target-model",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+    )
 
-    with patch("api.models.anthropic.get_settings", return_value=settings):
-        request = MessagesRequest(
-            model="claude-opus-4-20250514",
-            max_tokens=100,
-            messages=[Message(role="user", content="hello")],
-        )
-        assert request.model == "deepseek/deepseek-r1"
-        assert request.resolved_provider_model == "open_router/deepseek/deepseek-r1"
-        assert request.original_model == "claude-opus-4-20250514"
-
-
-def test_messages_request_model_aware_haiku_override():
-    """Haiku model routes to MODEL_HAIKU when set."""
-    settings = Settings()
-    settings.model = "nvidia_nim/fallback-model"
-    settings.model_haiku = "lmstudio/qwen2.5-7b"
-
-    with patch("api.models.anthropic.get_settings", return_value=settings):
-        request = MessagesRequest(
-            model="claude-3-haiku-20240307",
-            max_tokens=100,
-            messages=[Message(role="user", content="hello")],
-        )
-        assert request.model == "qwen2.5-7b"
-        assert request.resolved_provider_model == "lmstudio/qwen2.5-7b"
+    assert request.model == "target-model"
+    assert "original_model" not in request.model_dump()
+    assert "resolved_provider_model" not in request.model_dump()
 
 
-def test_messages_request_model_aware_sonnet_override():
-    """Sonnet model routes to MODEL_SONNET when set."""
-    settings = Settings()
-    settings.model = "nvidia_nim/fallback-model"
-    settings.model_sonnet = "nvidia_nim/meta/llama-3.3-70b-instruct"
+def test_token_count_request_parses_without_model_mapping_side_effects():
+    request = TokenCountRequest(
+        model="claude-3-sonnet", messages=[Message(role="user", content="hello")]
+    )
 
-    with patch("api.models.anthropic.get_settings", return_value=settings):
-        request = MessagesRequest(
-            model="claude-sonnet-4-20250514",
-            max_tokens=100,
-            messages=[Message(role="user", content="hello")],
-        )
-        assert request.model == "meta/llama-3.3-70b-instruct"
-        assert (
-            request.resolved_provider_model == "nvidia_nim/meta/llama-3.3-70b-instruct"
-        )
+    assert request.model == "claude-3-sonnet"
 
 
-def test_messages_request_model_fallback_when_not_set():
-    """When model override is None, falls back to MODEL."""
-    settings = Settings()
-    settings.model = "nvidia_nim/fallback-model"
-    settings.model_opus = None
-    settings.model_sonnet = None
-    settings.model_haiku = None
-    # model_opus is None
+def test_token_count_request_normalizes_system_role_messages():
+    request = TokenCountRequest.model_validate(
+        {
+            "model": "claude-3-sonnet",
+            "messages": [
+                {"role": "system", "content": "counting system"},
+                {"role": "user", "content": "hello"},
+            ],
+        }
+    )
 
-    with patch("api.models.anthropic.get_settings", return_value=settings):
-        request = MessagesRequest(
-            model="claude-opus-4-20250514",
-            max_tokens=100,
-            messages=[Message(role="user", content="hello")],
-        )
-        assert request.model == "fallback-model"
-        assert request.resolved_provider_model == "nvidia_nim/fallback-model"
+    assert len(request.messages) == 1
+    assert request.messages[0].role == "user"
+    assert request.system == "counting system"
 
 
-def test_token_count_request_model_aware():
-    """TokenCountRequest also uses model-aware resolution."""
-    settings = Settings()
-    settings.model = "nvidia_nim/fallback-model"
-    settings.model_haiku = "lmstudio/qwen2.5-7b"
+def test_messages_request_preserves_thinking_signature():
+    request = MessagesRequest.model_validate(
+        {
+            "model": "claude-3-opus",
+            "max_tokens": 100,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "thinking",
+                            "thinking": "signed thought",
+                            "signature": "sig_123",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
 
-    with patch("api.models.anthropic.get_settings", return_value=settings):
-        request = TokenCountRequest(
-            model="claude-3-haiku-20240307",
-            messages=[Message(role="user", content="hello")],
-        )
-        assert request.model == "qwen2.5-7b"
+    dumped = request.model_dump(exclude_none=True)
+
+    assert dumped["messages"][0]["content"][0]["signature"] == "sig_123"
+
+
+def test_messages_request_preserves_native_thinking_budget():
+    request = MessagesRequest.model_validate(
+        {
+            "model": "claude-3-opus",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": "think hard"}],
+            "thinking": {"type": "enabled", "budget_tokens": 4096},
+        }
+    )
+
+    dumped = request.model_dump(exclude_none=True)
+
+    assert dumped["thinking"]["type"] == "enabled"
+    assert dumped["thinking"]["budget_tokens"] == 4096
+
+
+def test_messages_request_accepts_adaptive_thinking_type():
+    request = MessagesRequest.model_validate(
+        {
+            "model": "claude-3-opus",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+        }
+    )
+
+    dumped = request.model_dump(exclude_none=True)
+
+    assert dumped["thinking"]["type"] == "adaptive"
+
+
+def test_messages_request_accepts_anthropic_server_tool_without_input_schema():
+    request = MessagesRequest.model_validate(
+        {
+            "model": "claude-opus-4-7",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": "search"}],
+            "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+        }
+    )
+
+    dumped = request.model_dump(exclude_none=True)
+
+    assert dumped["tools"] == [{"name": "web_search", "type": "web_search_20250305"}]
+
+
+def test_messages_request_accepts_redacted_thinking_blocks():
+    request = MessagesRequest.model_validate(
+        {
+            "model": "claude-3-opus",
+            "max_tokens": 100,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [{"type": "redacted_thinking", "data": "opaque"}],
+                }
+            ],
+        }
+    )
+
+    dumped = request.model_dump(exclude_none=True)
+
+    assert dumped["messages"][0]["content"][0] == {
+        "type": "redacted_thinking",
+        "data": "opaque",
+    }

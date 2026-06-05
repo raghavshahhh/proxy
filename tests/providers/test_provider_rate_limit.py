@@ -4,7 +4,16 @@ import time
 import pytest
 import pytest_asyncio
 
-from providers.rate_limit import GlobalRateLimiter
+from providers.rate_limit import (
+    DEFAULT_UPSTREAM_MAX_RETRIES,
+    UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS,
+    GlobalRateLimiter,
+)
+
+
+def test_upstream_transient_retry_total_attempts_is_five() -> None:
+    assert UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS == 5
+    assert DEFAULT_UPSTREAM_MAX_RETRIES == 4
 
 
 class TestProviderRateLimiter:
@@ -27,11 +36,11 @@ class TestProviderRateLimiter:
         GlobalRateLimiter.reset_instance()
         limiter = GlobalRateLimiter.get_instance(rate_limit=1, rate_window=0.25)
 
-        start_time = time.time()
+        start_time = time.monotonic()
 
         async def call_limiter():
             await limiter.wait_if_blocked()
-            return time.time()
+            return time.monotonic()
 
         # 5 requests.
         # R0 -> 0s
@@ -41,7 +50,7 @@ class TestProviderRateLimiter:
         # R4 -> 1.00s
         results = [await call_limiter() for _ in range(5)]
 
-        total_time = time.time() - start_time
+        total_time = time.monotonic() - start_time
 
         assert len(results) == 5
         # Should take at least ~1.0s
@@ -56,7 +65,7 @@ class TestProviderRateLimiter:
         GlobalRateLimiter.reset_instance()
         limiter = GlobalRateLimiter.get_instance()
 
-        start_time = time.time()
+        start_time = time.monotonic()
 
         # Manually block for 1.5s
         block_time = 1.5
@@ -71,7 +80,7 @@ class TestProviderRateLimiter:
         # They should both wait for the block time
         results = await asyncio.gather(call_limiter(), call_limiter())
 
-        total_time = time.time() - start_time
+        total_time = time.monotonic() - start_time
 
         # Both should report having waited reactively
         assert all(results) is True
@@ -121,10 +130,10 @@ class TestProviderRateLimiter:
         GlobalRateLimiter.reset_instance()
         limiter = GlobalRateLimiter.get_instance(rate_limit=10000, rate_window=60)
 
-        start = time.time()
+        start = time.monotonic()
         for _ in range(20):
             await limiter.wait_if_blocked()
-        duration = time.time() - start
+        duration = time.monotonic() - start
 
         # 20 requests with 10000 limit should be near-instant
         assert duration < 1.0, f"High rate limit caused throttling: {duration:.2f}s"
@@ -253,6 +262,147 @@ class TestProviderRateLimiter:
         assert call_count == 2
 
     @pytest.mark.asyncio
+    async def test_execute_with_retry_succeeds_on_httpx_429(self):
+        """HTTP 429 as httpx.HTTPStatusError then success returns result."""
+        import httpx
+        from httpx import Request, Response
+
+        limiter = GlobalRateLimiter.get_instance(rate_limit=100, rate_window=60)
+
+        call_count = 0
+
+        async def fail_then_ok():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                r = Response(429, request=Request("POST", "http://x"), text="slow")
+                raise httpx.HTTPStatusError(
+                    "Too Many Requests", request=r.request, response=r
+                )
+            return "ok"
+
+        result = await limiter.execute_with_retry(
+            fail_then_ok, max_retries=2, base_delay=0.01, max_delay=0.1, jitter=0
+        )
+        assert result == "ok"
+        assert call_count == 2
+
+    @pytest.mark.parametrize("status_code", [500, 502, 503, 504])
+    @pytest.mark.asyncio
+    async def test_execute_with_retry_succeeds_on_openai_internal_server_error_5xx(
+        self, status_code
+    ):
+        """5xx as openai.InternalServerError then success."""
+        import openai
+        from httpx import Request, Response
+
+        GlobalRateLimiter.reset_instance()
+        limiter = GlobalRateLimiter.get_instance(rate_limit=100, rate_window=60)
+
+        def make_upstream_error():
+            return openai.InternalServerError(
+                "unavailable",
+                response=Response(status_code, request=Request("POST", "http://x")),
+                body={},
+            )
+
+        call_count = 0
+
+        async def fail_then_ok():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise make_upstream_error()
+            return "ok"
+
+        result = await limiter.execute_with_retry(
+            fail_then_ok, max_retries=2, base_delay=0.01, max_delay=0.1, jitter=0
+        )
+        assert result == "ok"
+        assert call_count == 2
+
+    @pytest.mark.parametrize("status_code", [500, 502, 503, 504])
+    @pytest.mark.asyncio
+    async def test_execute_with_retry_succeeds_on_httpx_5xx(self, status_code):
+        """HTTP 5xx as httpx.HTTPStatusError then success."""
+        import httpx
+        from httpx import Request, Response
+
+        limiter = GlobalRateLimiter.get_instance(rate_limit=100, rate_window=60)
+
+        call_count = 0
+
+        async def fail_then_ok():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                r = Response(
+                    status_code, request=Request("POST", "http://x"), text="error"
+                )
+                raise httpx.HTTPStatusError(
+                    "Server Error", request=r.request, response=r
+                )
+            return "ok"
+
+        result = await limiter.execute_with_retry(
+            fail_then_ok, max_retries=2, base_delay=0.01, max_delay=0.1, jitter=0
+        )
+        assert result == "ok"
+        assert call_count == 2
+
+    @pytest.mark.parametrize("status_code", [500, 502, 503, 504])
+    @pytest.mark.asyncio
+    async def test_execute_with_retry_exhaust_openai_5xx_raises(self, status_code):
+        """When all 5xx retries exhausted (OpenAI SDK), last InternalServerError is raised."""
+        import openai
+        from httpx import Request, Response
+
+        GlobalRateLimiter.reset_instance()
+        limiter = GlobalRateLimiter.get_instance(rate_limit=100, rate_window=60)
+
+        exc = openai.InternalServerError(
+            "unavailable",
+            response=Response(status_code, request=Request("POST", "http://x")),
+            body={},
+        )
+
+        async def always_fail():
+            raise exc
+
+        with pytest.raises(openai.InternalServerError):
+            await limiter.execute_with_retry(
+                always_fail, max_retries=2, base_delay=0.01, max_delay=0.1, jitter=0
+            )
+
+    @pytest.mark.asyncio
+    async def test_execute_with_retry_httpx_400_raises_immediately(self):
+        """Non-retryable 4xx is not wrapped by execute_with_retry loop."""
+        import httpx
+        from httpx import Request, Response
+
+        GlobalRateLimiter.reset_instance()
+        limiter = GlobalRateLimiter.get_instance(rate_limit=100, rate_window=60)
+
+        call_count = 0
+
+        async def bad_request():
+            nonlocal call_count
+            call_count += 1
+            r = Response(400, request=Request("POST", "http://x"), text="bad request")
+            raise httpx.HTTPStatusError("Bad Request", request=r.request, response=r)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await limiter.execute_with_retry(
+                bad_request,
+                max_retries=2,
+                base_delay=0.01,
+                max_delay=0.1,
+                jitter=0,
+            )
+
+        assert call_count == 1
+
+    @pytest.mark.asyncio
     async def test_max_concurrency_zero_raises(self):
         """max_concurrency <= 0 raises ValueError."""
         GlobalRateLimiter.reset_instance()
@@ -315,3 +465,20 @@ class TestProviderRateLimiter:
         )
         assert limiter._concurrency_sem is not None
         assert limiter._concurrency_sem._value == 3
+
+    @pytest.mark.asyncio
+    async def test_scoped_instances_are_isolated(self):
+        """Provider-scoped limiters do not share reactive block state."""
+        GlobalRateLimiter.reset_instance()
+        nim = GlobalRateLimiter.get_scoped_instance(
+            "nvidia_nim", rate_limit=10, rate_window=60
+        )
+        openrouter = GlobalRateLimiter.get_scoped_instance(
+            "open_router", rate_limit=20, rate_window=30
+        )
+
+        assert nim is not openrouter
+        nim.set_blocked(1.0)
+
+        assert nim.is_blocked() is True
+        assert openrouter.is_blocked() is False

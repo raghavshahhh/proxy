@@ -1,8 +1,14 @@
 """Tests for config/settings.py and config/nim.py"""
 
+from typing import Any, cast
+
 import pytest
 from pydantic import ValidationError
 
+from config.constants import (
+    ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+    HTTP_CONNECT_TIMEOUT_DEFAULT,
+)
 from config.nim import NimSettings
 
 
@@ -16,15 +22,132 @@ class TestSettings:
         settings = Settings()
         assert settings is not None
 
-    def test_default_values(self):
+    def test_default_values(self, monkeypatch):
         """Test default values are set and have correct types."""
         from config.settings import Settings
 
+        monkeypatch.delenv("CLAUDE_WORKSPACE", raising=False)
+        monkeypatch.delenv("MODEL", raising=False)
+        monkeypatch.delenv("HTTP_READ_TIMEOUT", raising=False)
+        monkeypatch.delenv("HTTP_CONNECT_TIMEOUT", raising=False)
+        monkeypatch.setitem(Settings.model_config, "env_file", ())
         settings = Settings()
+        assert settings.model == "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
         assert isinstance(settings.provider_rate_limit, int)
         assert isinstance(settings.provider_rate_window, int)
         assert isinstance(settings.nim.temperature, float)
         assert isinstance(settings.fast_prefix_detection, bool)
+        assert isinstance(settings.enable_model_thinking, bool)
+        assert settings.http_read_timeout == 120.0
+        assert settings.http_connect_timeout == HTTP_CONNECT_TIMEOUT_DEFAULT
+        assert settings.enable_web_server_tools is False
+        assert settings.log_raw_api_payloads is False
+        assert settings.log_raw_sse_events is False
+        assert settings.debug_platform_edits is False
+        assert settings.debug_subagent_stack is False
+
+    def test_default_claude_workspace_uses_fcc_home(self, monkeypatch, tmp_path):
+        """Unset CLAUDE_WORKSPACE stores agent data under ~/.fcc."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.delenv("CLAUDE_WORKSPACE", raising=False)
+        monkeypatch.setitem(Settings.model_config, "env_file", ())
+
+        settings = Settings()
+
+        assert settings.claude_workspace == str(tmp_path / ".fcc" / "agent_workspace")
+
+    def test_server_log_path_uses_fcc_home(self, monkeypatch, tmp_path):
+        """The server log location is fixed under ~/.fcc."""
+        from config.paths import server_log_path
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+        assert server_log_path() == tmp_path / ".fcc" / "logs" / "server.log"
+
+    def test_removed_log_file_env_is_ignored(self, monkeypatch):
+        """Legacy LOG_FILE values do not affect Settings or block startup."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("LOG_FILE", "custom/server.log")
+        monkeypatch.setitem(Settings.model_config, "env_file", ())
+
+        settings = Settings()
+
+        assert not hasattr(settings, "log_file")
+
+    def test_stale_zai_base_url_env_is_ignored(self, monkeypatch):
+        """Cloud Z.ai endpoint is fixed in provider metadata, not settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("ZAI_BASE_URL", "https://custom.zai.invalid/v1")
+        monkeypatch.setitem(Settings.model_config, "env_file", ())
+
+        settings = Settings()
+
+        assert not hasattr(settings, "zai_base_url")
+
+    def test_blank_claude_workspace_uses_fcc_home(self, monkeypatch, tmp_path):
+        """An explicit blank env value does not affect the fixed workspace path."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_WORKSPACE", "")
+        monkeypatch.setitem(Settings.model_config, "env_file", ())
+
+        settings = Settings()
+
+        assert settings.claude_workspace == str(tmp_path / ".fcc" / "agent_workspace")
+
+    def test_explicit_claude_workspace_is_ignored(self, monkeypatch, tmp_path):
+        """Custom CLAUDE_WORKSPACE values do not override the fixed workspace."""
+        from config.settings import Settings
+
+        workspace = tmp_path / "custom-workspace"
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_WORKSPACE", str(workspace))
+        monkeypatch.setitem(Settings.model_config, "env_file", ())
+
+        settings = Settings()
+
+        assert settings.claude_workspace == str(tmp_path / ".fcc" / "agent_workspace")
+
+    def test_explicit_claude_cli_bin_is_ignored(self, monkeypatch):
+        """Custom CLAUDE_CLI_BIN values do not override the fixed binary."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("CLAUDE_CLI_BIN", "claude-custom")
+        monkeypatch.setitem(Settings.model_config, "env_file", ())
+
+        settings = Settings()
+
+        assert settings.claude_cli_bin == "claude"
+
+    def test_direct_claude_runtime_overrides_are_ignored(self, monkeypatch, tmp_path):
+        """Constructor extras cannot override fixed Claude runtime settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.setitem(Settings.model_config, "env_file", ())
+
+        settings = Settings(
+            **cast(
+                Any,
+                {
+                    "claude_workspace": str(tmp_path / "custom-workspace"),
+                    "claude_cli_bin": "claude-custom",
+                },
+            )
+        )
+
+        assert settings.claude_workspace == str(tmp_path / ".fcc" / "agent_workspace")
+        assert settings.claude_cli_bin == "claude"
 
     def test_get_settings_cached(self):
         """Test get_settings returns cached instance."""
@@ -51,10 +174,10 @@ class TestSettings:
         assert len(settings.model) > 0
 
     def test_base_url_constant(self):
-        """Test NVIDIA_NIM_BASE_URL is a constant."""
-        from providers.nvidia_nim import NVIDIA_NIM_BASE_URL
+        """Test NVIDIA_NIM_DEFAULT_BASE is a constant."""
+        from providers.nvidia_nim import NVIDIA_NIM_DEFAULT_BASE
 
-        assert NVIDIA_NIM_BASE_URL == "https://integrate.api.nvidia.com/v1"
+        assert NVIDIA_NIM_DEFAULT_BASE == "https://integrate.api.nvidia.com/v1"
 
     def test_lm_studio_base_url_from_env(self, monkeypatch):
         """LM_STUDIO_BASE_URL env var is loaded into settings."""
@@ -63,6 +186,23 @@ class TestSettings:
         monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://custom:5678/v1")
         settings = Settings()
         assert settings.lm_studio_base_url == "http://custom:5678/v1"
+
+    def test_ollama_base_url_defaults_to_root(self, monkeypatch):
+        """OLLAMA_BASE_URL defaults to the Anthropic-compatible Ollama root URL."""
+        from config.settings import Settings
+
+        monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+        monkeypatch.setitem(Settings.model_config, "env_file", ())
+        settings = Settings()
+        assert settings.ollama_base_url == "http://localhost:11434"
+
+    def test_ollama_base_url_rejects_v1_suffix(self, monkeypatch):
+        """OLLAMA_BASE_URL must not include /v1 for native Anthropic messages."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+        with pytest.raises(ValidationError, match="without /v1"):
+            Settings()
 
     def test_provider_rate_limit_from_env(self, monkeypatch):
         """PROVIDER_RATE_LIMIT env var is loaded into settings."""
@@ -104,6 +244,141 @@ class TestSettings:
         settings = Settings()
         assert settings.http_connect_timeout == 5.0
 
+    def test_http_connect_timeout_default_matches_shared_constant(
+        self, monkeypatch
+    ) -> None:
+        """Default must match config.constants (and README / .env.example)."""
+        from config.settings import Settings
+
+        monkeypatch.delenv("HTTP_CONNECT_TIMEOUT", raising=False)
+        monkeypatch.setitem(Settings.model_config, "env_file", ())
+        settings = Settings()
+        assert settings.http_connect_timeout == HTTP_CONNECT_TIMEOUT_DEFAULT
+        assert HTTP_CONNECT_TIMEOUT_DEFAULT == 10.0
+
+    def test_enable_model_thinking_from_env(self, monkeypatch):
+        """ENABLE_MODEL_THINKING env var is loaded into settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("ENABLE_MODEL_THINKING", "false")
+        settings = Settings()
+        assert settings.enable_model_thinking is False
+
+    def test_wafer_api_key_from_env(self, monkeypatch):
+        """WAFER_API_KEY env var is loaded into settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("WAFER_API_KEY", "wafer-key")
+        settings = Settings()
+        assert settings.wafer_api_key == "wafer-key"
+
+    def test_per_model_thinking_from_env(self, monkeypatch):
+        """Per-model thinking env vars are loaded into settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("ENABLE_OPUS_THINKING", "true")
+        monkeypatch.setenv("ENABLE_SONNET_THINKING", "false")
+        monkeypatch.setenv("ENABLE_HAIKU_THINKING", "false")
+        settings = Settings()
+        assert settings.enable_opus_thinking is True
+        assert settings.enable_sonnet_thinking is False
+        assert settings.enable_haiku_thinking is False
+
+    def test_empty_per_model_thinking_inherits_model_default(self, monkeypatch):
+        """Blank per-model thinking env vars are treated as unset."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("ENABLE_MODEL_THINKING", "false")
+        monkeypatch.setenv("ENABLE_OPUS_THINKING", "")
+        settings = Settings()
+        assert settings.enable_opus_thinking is None
+        assert settings.resolve_thinking("claude-opus-4-20250514") is False
+
+    def test_resolve_thinking_uses_model_tiers(self, monkeypatch):
+        """resolve_thinking applies tier override then fallback."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("ENABLE_MODEL_THINKING", "false")
+        monkeypatch.setenv("ENABLE_OPUS_THINKING", "true")
+        monkeypatch.setenv("ENABLE_HAIKU_THINKING", "false")
+        settings = Settings()
+        assert settings.resolve_thinking("claude-opus-4-20250514") is True
+        assert settings.resolve_thinking("claude-sonnet-4-20250514") is False
+        assert settings.resolve_thinking("claude-haiku-4-20250514") is False
+        assert settings.resolve_thinking("unknown-model") is False
+
+    def test_anthropic_auth_token_from_env_without_dotenv_key(self, monkeypatch):
+        """ANTHROPIC_AUTH_TOKEN env var is loaded when dotenv does not define it."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "process-token")
+        monkeypatch.setitem(Settings.model_config, "env_file", ())
+        settings = Settings()
+        assert settings.anthropic_auth_token == "process-token"
+        assert settings.uses_process_anthropic_auth_token() is True
+
+    def test_empty_dotenv_anthropic_auth_token_overrides_process_env(
+        self, monkeypatch, tmp_path
+    ):
+        """An explicit empty .env token disables auth despite stale shell tokens."""
+        from config.settings import Settings
+
+        env_file = tmp_path / ".env"
+        env_file.write_text("ANTHROPIC_AUTH_TOKEN=\n", encoding="utf-8")
+        monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "stale-client-token")
+        monkeypatch.setitem(Settings.model_config, "env_file", (env_file,))
+
+        settings = Settings()
+        assert settings.anthropic_auth_token == ""
+        assert settings.uses_process_anthropic_auth_token() is False
+
+    def test_dotenv_anthropic_auth_token_overrides_process_env(
+        self, monkeypatch, tmp_path
+    ):
+        """A configured .env token is the server token even with a stale shell token."""
+        from config.settings import Settings
+
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            'ANTHROPIC_AUTH_TOKEN="server-token"\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "stale-client-token")
+        monkeypatch.setitem(Settings.model_config, "env_file", (env_file,))
+
+        settings = Settings()
+        assert settings.anthropic_auth_token == "server-token"
+        assert settings.uses_process_anthropic_auth_token() is False
+
+    @pytest.mark.parametrize("removed_key", ["NIM_ENABLE_THINKING", "ENABLE_THINKING"])
+    def test_removed_thinking_env_keys_are_ignored(self, monkeypatch, removed_key):
+        """Stale thinking env keys do not block startup or affect settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv(removed_key, "false")
+        monkeypatch.setitem(Settings.model_config, "env_file", ())
+
+        settings = Settings()
+
+        assert settings.enable_model_thinking is True
+
+    @pytest.mark.parametrize("removed_key", ["NIM_ENABLE_THINKING", "ENABLE_THINKING"])
+    @pytest.mark.parametrize("value", ["false", ""])
+    def test_removed_thinking_dotenv_keys_are_ignored(
+        self, monkeypatch, tmp_path, removed_key, value
+    ):
+        """Stale thinking dotenv keys do not block startup or affect settings."""
+        from config.settings import Settings
+
+        env_file = tmp_path / ".env"
+        env_file.write_text(f"{removed_key}={value}\n", encoding="utf-8")
+        monkeypatch.delenv(removed_key, raising=False)
+        monkeypatch.setitem(Settings.model_config, "env_file", (env_file,))
+
+        settings = Settings()
+
+        assert settings.enable_model_thinking is True
+
 
 # --- NimSettings Validation Tests ---
 class TestNimSettingsValidBounds:
@@ -124,11 +399,6 @@ class TestNimSettingsValidBounds:
     def test_top_p_valid(self, top_p):
         s = NimSettings(top_p=top_p)
         assert s.top_p == top_p
-
-    @pytest.mark.parametrize("effort", ["low", "medium", "high"])
-    def test_reasoning_effort_valid(self, effort):
-        s = NimSettings(reasoning_effort=effort)
-        assert s.reasoning_effort == effort
 
     def test_max_tokens_valid(self):
         s = NimSettings(max_tokens=1)
@@ -195,15 +465,12 @@ class TestNimSettingsInvalidBounds:
         with pytest.raises(ValidationError):
             NimSettings(min_tokens=-1)
 
-    def test_reasoning_effort_invalid(self):
-        from typing import Any, cast
-
-        with pytest.raises(ValidationError):
-            NimSettings(reasoning_effort=cast(Any, "invalid"))
-
 
 class TestNimSettingsValidators:
     """Test custom field validators in NimSettings."""
+
+    def test_default_max_tokens_matches_shared_constant(self):
+        assert NimSettings().max_tokens == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 
     @pytest.mark.parametrize(
         "seed_val,expected",
@@ -238,6 +505,13 @@ class TestNimSettingsValidators:
 
         with pytest.raises(ValidationError):
             NimSettings(**cast(Any, {"unknown_field": "value"}))
+
+    def test_enable_thinking_field_removed(self):
+        """NimSettings no longer accepts the removed thinking toggle."""
+        from typing import Any, cast
+
+        with pytest.raises(ValidationError):
+            NimSettings(**cast(Any, {"enable_thinking": True}))
 
 
 class TestSettingsOptionalStr:
@@ -330,6 +604,19 @@ class TestPerModelMapping:
         s = Settings()
         assert s.model_opus == "open_router/deepseek/deepseek-r1"
 
+    @pytest.mark.parametrize("env_var", ["MODEL_OPUS", "MODEL_SONNET", "MODEL_HAIKU"])
+    def test_empty_model_override_env_is_unset(self, monkeypatch, env_var):
+        """Empty per-model override env vars are treated as unset."""
+        from config.settings import Settings
+
+        monkeypatch.setenv(env_var, "")
+        s = Settings()
+        assert getattr(s, env_var.lower()) is None
+        assert (
+            s.resolve_model(f"claude-{env_var.removeprefix('MODEL_').lower()}-4")
+            == s.model
+        )
+
     @pytest.mark.parametrize(
         "env_vars,expected_model,expected_haiku",
         [
@@ -346,8 +633,11 @@ class TestPerModelMapping:
                 "open_router/anthropic/claude-3-opus",
                 "open_router/anthropic/claude-3-haiku",
             ),
+            ({"MODEL": "deepseek/deepseek-chat"}, "deepseek/deepseek-chat", None),
+            ({"MODEL": "wafer/DeepSeek-V4-Pro"}, "wafer/DeepSeek-V4-Pro", None),
             ({"MODEL": "lmstudio/qwen2.5-7b"}, "lmstudio/qwen2.5-7b", None),
             ({"MODEL": "llamacpp/local-model"}, "llamacpp/local-model", None),
+            ({"MODEL": "ollama/llama3.1"}, "ollama/llama3.1", None),
         ],
     )
     def test_settings_models_from_env(
@@ -481,13 +771,76 @@ class TestPerModelMapping:
 
         assert Settings.parse_provider_type("nvidia_nim/meta/llama") == "nvidia_nim"
         assert Settings.parse_provider_type("open_router/deepseek/r1") == "open_router"
+        assert (
+            Settings.parse_provider_type("mistral/devstral-small-latest") == "mistral"
+        )
+        assert (
+            Settings.parse_provider_type("mistral_codestral/codestral-latest")
+            == "mistral_codestral"
+        )
+        assert Settings.parse_provider_type("deepseek/deepseek-chat") == "deepseek"
         assert Settings.parse_provider_type("lmstudio/qwen") == "lmstudio"
         assert Settings.parse_provider_type("llamacpp/model") == "llamacpp"
+        assert Settings.parse_provider_type("ollama/llama3.1") == "ollama"
+        assert Settings.parse_provider_type("wafer/DeepSeek-V4-Pro") == "wafer"
+        assert (
+            Settings.parse_provider_type("gemini/models/gemini-3.1-flash-lite")
+            == "gemini"
+        )
+        assert Settings.parse_provider_type("groq/llama-3.3-70b-versatile") == "groq"
+        assert Settings.parse_provider_type("cerebras/llama3.1-8b") == "cerebras"
 
     def test_parse_model_name(self):
         """parse_model_name extracts model name from model string."""
         from config.settings import Settings
 
         assert Settings.parse_model_name("nvidia_nim/meta/llama") == "meta/llama"
+        assert (
+            Settings.parse_model_name("mistral/devstral-small-latest")
+            == "devstral-small-latest"
+        )
+        assert (
+            Settings.parse_model_name("mistral_codestral/codestral-latest")
+            == "codestral-latest"
+        )
+        assert Settings.parse_model_name("deepseek/deepseek-chat") == "deepseek-chat"
         assert Settings.parse_model_name("lmstudio/qwen") == "qwen"
         assert Settings.parse_model_name("llamacpp/model") == "model"
+        assert Settings.parse_model_name("ollama/llama3.1") == "llama3.1"
+        assert Settings.parse_model_name("wafer/DeepSeek-V4-Pro") == "DeepSeek-V4-Pro"
+        assert (
+            Settings.parse_model_name("gemini/models/gemini-3.1-flash-lite")
+            == "models/gemini-3.1-flash-lite"
+        )
+        assert (
+            Settings.parse_model_name("groq/llama-3.3-70b-versatile")
+            == "llama-3.3-70b-versatile"
+        )
+        assert Settings.parse_model_name("cerebras/llama3.1-8b") == "llama3.1-8b"
+
+    def test_configured_chat_model_refs_collects_unique_models_with_sources(
+        self, monkeypatch
+    ):
+        """Startup validation model collection is limited to configured chat refs."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("FCC_SMOKE_MODEL_NVIDIA_NIM", "nvidia_nim/smoke")
+        monkeypatch.setenv("WHISPER_MODEL", "openai/whisper-large-v3")
+        s = Settings()
+        s.model = "nvidia_nim/fallback"
+        s.model_opus = "open_router/anthropic/claude-opus"
+        s.model_sonnet = "nvidia_nim/fallback"
+        s.model_haiku = None
+
+        refs = s.configured_chat_model_refs()
+
+        assert [ref.model_ref for ref in refs] == [
+            "nvidia_nim/fallback",
+            "open_router/anthropic/claude-opus",
+        ]
+        assert refs[0].provider_id == "nvidia_nim"
+        assert refs[0].model_id == "fallback"
+        assert refs[0].sources == ("MODEL", "MODEL_SONNET")
+        assert refs[1].provider_id == "open_router"
+        assert refs[1].model_id == "anthropic/claude-opus"
+        assert refs[1].sources == ("MODEL_OPUS",)

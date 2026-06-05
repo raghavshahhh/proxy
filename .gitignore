@@ -1,63 +1,17 @@
-# Environment
+__pycache__
+.claude
+.cursor
+.pytest_cache
+.ruff_cache
+.serena
+.venv
+agent_workspace
 .env
-.env.backup
-.venv/
-.venv_test/
-*.save
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-
-# Secrets / SSH keys
-ghp_*
-
-# Logs
-*.log
-server.*.log
-
-# Runtime
-*.pid
-.proxy.pid
-.proxy.history
-
-# IDE / Editor
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Claude Code
-.claude/.session_active
-.claude/.current_project
-.claude/.checkpoint.pid
-.claude/agents/*.json
-.claude/telemetry/*.log
-.claude/commands/
-.claude/context.md
-
-# OS
-.DS_Store
-Thumbs.db
-
-# tiktoken cache
-.tiktoken_cache/
-
-# UV cache
-.uv_cache/
-
-# Ruff cache
-.ruff_cache/
-
-# Build artifacts
-dist/
-*.egg-info/
-
-# Proxy subdirectory (separate clone)
-proxy/
-
-# Misc
-.remember/
-*.png
-.pytest_cache/
+/logs/
+server.log
+/server.*.log
+debug-*.log
+.coverage
+llama_cache
+.smoke-results
+.vscode

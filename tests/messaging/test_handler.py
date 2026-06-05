@@ -13,6 +13,50 @@ def handler(mock_platform, mock_cli_manager, mock_session_store):
     return ClaudeMessageHandler(mock_platform, mock_cli_manager, mock_session_store)
 
 
+@pytest.mark.asyncio
+async def test_handle_message_turn_trace_includes_full_message_text(
+    mock_platform, mock_cli_manager, mock_session_store, incoming_message_factory
+):
+    """turn.received always records the verbatim user message (local debugging)."""
+    secret = "user-message-content-visible-in-trace"
+    handler = ClaudeMessageHandler(
+        mock_platform,
+        mock_cli_manager,
+        mock_session_store,
+        log_raw_messaging_content=False,
+    )
+    incoming = incoming_message_factory(text=secret)
+    with (
+        patch.object(handler, "_handle_message_impl", new_callable=AsyncMock),
+        patch("messaging.handler.trace_event") as trace_mock,
+    ):
+        await handler.handle_message(incoming)
+    kwargs = trace_mock.call_args.kwargs
+    assert kwargs["event"] == "turn.received"
+    assert kwargs["message_text"] == secret
+
+
+@pytest.mark.asyncio
+async def test_handle_message_log_raw_messaging_does_not_change_turn_received_shape(
+    mock_platform, mock_cli_manager, mock_session_store, incoming_message_factory
+):
+    """LOG_RAW_MESSAGING_CONTENT is adapter-only; ingress TRACE always includes text."""
+    text = "visible-either-way"
+    handler = ClaudeMessageHandler(
+        mock_platform,
+        mock_cli_manager,
+        mock_session_store,
+        log_raw_messaging_content=True,
+    )
+    incoming = incoming_message_factory(text=text)
+    with (
+        patch.object(handler, "_handle_message_impl", new_callable=AsyncMock),
+        patch("messaging.handler.trace_event") as trace_mock,
+    ):
+        await handler.handle_message(incoming)
+    assert trace_mock.call_args.kwargs["message_text"] == text
+
+
 def test_get_initial_status_new_conversation(handler):
     """New conversation always returns launching message."""
     result = handler._get_initial_status(None, None)
@@ -375,6 +419,54 @@ async def test_process_node_success_flow(handler, mock_cli_manager, mock_platfor
         last_call = mock_platform.queue_edit_message.call_args_list[-1]
         assert "✅ *Complete*" in last_call[0][2]
         assert "Hello world" in last_call[0][2]
+
+    mock_cli_manager.get_or_create_session.assert_awaited_once_with(session_id=None)
+    mock_session.start_task.assert_called_once()
+    st_kw = mock_session.start_task.call_args
+    assert st_kw.kwargs.get("session_id") is None
+    assert st_kw.kwargs.get("fork_session") is False
+
+
+@pytest.mark.asyncio
+async def test_process_node_reply_uses_parent_session_for_manager_and_fork(
+    handler, mock_cli_manager, mock_platform
+):
+    """Telegram follow-ups must reuse parent Claude session (issue #233)."""
+    node_id = "child_1"
+    mock_node = MagicMock()
+    mock_node.incoming.chat_id = "chat_1"
+    mock_node.incoming.text = "follow up"
+    mock_node.status_message_id = "status_child"
+    mock_node.parent_id = "root_msg"
+
+    parent_claude_session = "claude_sess_parent"
+    mock_session = MagicMock()
+    mock_session.start_task.return_value = mock_async_gen([{"type": "exit", "code": 0}])
+    mock_cli_manager.get_or_create_session.return_value = (
+        mock_session,
+        parent_claude_session,
+        False,
+    )
+
+    mock_tree = MagicMock()
+    mock_tree.update_state = AsyncMock()
+    mock_tree.root_id = "root_msg"
+    mock_tree.to_dict.return_value = {}
+    mock_tree.get_parent_session_id = MagicMock(return_value=parent_claude_session)
+
+    with patch.object(
+        handler.tree_queue, "get_tree_for_node", MagicMock(return_value=mock_tree)
+    ):
+        await handler._process_node(node_id, mock_node)
+
+    mock_tree.get_parent_session_id.assert_called_once_with(node_id)
+    mock_cli_manager.get_or_create_session.assert_awaited_once_with(
+        session_id=parent_claude_session
+    )
+    mock_session.start_task.assert_called_once()
+    st_kw = mock_session.start_task.call_args
+    assert st_kw.kwargs.get("session_id") == parent_claude_session
+    assert st_kw.kwargs.get("fork_session") is True
 
 
 @pytest.mark.asyncio
