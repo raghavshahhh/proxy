@@ -11,3 +11,4 @@ pydantic-settings>=2.12.0
 openai>=2.16.0
 loguru>=0.7.0
 h2
+jsonschema>=4.25.0
