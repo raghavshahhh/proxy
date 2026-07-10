@@ -128,6 +128,10 @@ class Settings(BaseSettings):
 
     # ==================== NVIDIA NIM Config ====================
     nvidia_nim_api_key: str = ""
+    # Comma-separated list of NIM API keys (from separate accounts) to
+    # round-robin across, e.g. "key1,key2,key3". Falls back to the single
+    # nvidia_nim_api_key above when unset.
+    nvidia_nim_api_keys: str = ""
 
     # ==================== LM Studio Config ====================
     lm_studio_base_url: str = Field(

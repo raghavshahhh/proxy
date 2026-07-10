@@ -167,6 +167,9 @@ class OpenAIChatTransport(BaseProvider):
         """Return a modified request body for one retry, or None."""
         return None
 
+    def _before_create(self) -> None:
+        """Hook for providers that rotate credentials before each create call."""
+
     def _prepare_create_body(self, body: dict[str, Any]) -> dict[str, Any]:
         """Return the body passed to the upstream OpenAI-compatible client."""
         return body
@@ -183,6 +186,7 @@ class OpenAIChatTransport(BaseProvider):
     async def _create_stream(self, body: dict) -> tuple[Any, dict]:
         """Create a streaming chat completion, optionally retrying once."""
         try:
+            self._before_create()
             create_body = self._prepare_create_body(body)
             stream = await self._global_rate_limiter.execute_with_retry(
                 self._client.chat.completions.create, **create_body, stream=True
@@ -193,6 +197,7 @@ class OpenAIChatTransport(BaseProvider):
             if retry_body is None:
                 raise
 
+            self._before_create()
             create_retry_body = self._prepare_create_body(retry_body)
             stream = await self._global_rate_limiter.execute_with_retry(
                 self._client.chat.completions.create, **create_retry_body, stream=True

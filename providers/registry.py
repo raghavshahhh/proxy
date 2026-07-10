@@ -35,7 +35,11 @@ PROVIDER_DESCRIPTORS: dict[str, ProviderDescriptor] = PROVIDER_CATALOG
 def _create_nvidia_nim(config: ProviderConfig, settings: Settings) -> BaseProvider:
     from providers.nvidia_nim import NvidiaNimProvider
 
-    return NvidiaNimProvider(config, nim_settings=settings.nim)
+    return NvidiaNimProvider(
+        config,
+        nim_settings=settings.nim,
+        extra_api_keys=settings.nvidia_nim_api_keys,
+    )
 
 
 def _create_open_router(config: ProviderConfig, _settings: Settings) -> BaseProvider:

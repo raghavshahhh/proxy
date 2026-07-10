@@ -11,6 +11,7 @@ from providers.base import ProviderConfig
 from providers.defaults import NVIDIA_NIM_DEFAULT_BASE
 from providers.openai_compat import OpenAIChatTransport
 
+from .key_rotation import NimKeyRotator
 from .request import (
     body_without_nim_tool_argument_aliases,
     build_request_body,
@@ -24,7 +25,13 @@ from .request import (
 class NvidiaNimProvider(OpenAIChatTransport):
     """NVIDIA NIM provider using official OpenAI client."""
 
-    def __init__(self, config: ProviderConfig, *, nim_settings: NimSettings):
+    def __init__(
+        self,
+        config: ProviderConfig,
+        *,
+        nim_settings: NimSettings,
+        extra_api_keys: str = "",
+    ):
         super().__init__(
             config,
             provider_name="NIM",
@@ -32,6 +39,20 @@ class NvidiaNimProvider(OpenAIChatTransport):
             api_key=config.api_key,
         )
         self._nim_settings = nim_settings
+        self._key_rotator = NimKeyRotator.from_settings_values(
+            extra_api_keys, config.api_key
+        )
+
+    def _before_create(self) -> None:
+        """Round-robin to the next available NIM key before each call.
+
+        Spreads load across every configured key from the start so no
+        single account approaches its rate limit; ``_get_retry_request_body``
+        additionally cools down a key and forces another rotation the moment
+        one does get rate-limited.
+        """
+        if self._key_rotator.key_count > 1:
+            self._client.api_key = self._key_rotator.next_key()
 
     def _build_request_body(
         self, request: Any, thinking_enabled: bool | None = None
@@ -52,8 +73,23 @@ class NvidiaNimProvider(OpenAIChatTransport):
         return nim_tool_argument_aliases_from_body(body)
 
     def _get_retry_request_body(self, error: Exception, body: dict) -> dict | None:
-        """Retry once with a downgraded body when NIM rejects a known field."""
+        """Retry once with a downgraded body when NIM rejects a known field.
+
+        A rate-limit (429) is handled separately: cool down the key that
+        just got limited and retry the same body unchanged - ``_before_create``
+        will pick a different key on that retry.
+        """
         status_code = getattr(error, "status_code", None)
+        if isinstance(error, openai.RateLimitError) or status_code == 429:
+            if self._key_rotator.key_count > 1:
+                self._key_rotator.mark_rate_limited(self._key_rotator.current_key())
+                logger.warning(
+                    "NIM_STREAM: key rate-limited, rotating to next of {} keys",
+                    self._key_rotator.key_count,
+                )
+                return body
+            return None
+
         if not isinstance(error, openai.BadRequestError) and status_code != 400:
             return None
 
