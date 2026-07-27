@@ -85,6 +85,17 @@ RUN --mount=type=cache,id=npm-cache,target=/root/.npm \
   && (test -n "$(find node_modules/tls-client-node/bin -mindepth 1 -print -quit 2>/dev/null)" \
       || (echo "tls-client-node native binary missing after postinstall — GitHub API fetch likely rate-limited or failed (#7802)" >&2 && exit 1))
 
+# Strip the LLMLingua-2/local-embedding optional dependency closure
+# (@tensorflow/tfjs, @huggingface/transformers, @atjsh/llmlingua-2). These are
+# fail-soft optionalDependencies (see scripts/build/colocateOptionals.mjs) used
+# only for local prompt compression / embeddings — never the core request-routing
+# path — but their combined weight (native TF bindings, model-loading code) was
+# blowing the disk/memory budget of resource-constrained build environments
+# (GitHub Actions hosted runner, Render free tier). Removing them here, before
+# `npm run build`, keeps the image lean without touching required natives
+# (better-sqlite3, tls-client-node) verified above.
+RUN rm -rf node_modules/@tensorflow node_modules/@huggingface node_modules/@atjsh
+
 # Build with Turbopack (stable in Next 16, the repo default). The v3.8.27-era
 # TurbopackInternalError panic ("entered unreachable code: there must be a path to a
 # root" in ImportTracer::get_traces) no longer reproduces on Next 16.2.9 — validated
