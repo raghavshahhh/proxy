@@ -1,4 +1,5 @@
 name: Build & Deploy to Render (GHCR)
+# repo made public 2026-07-27 to get unrestricted free GHA minutes
 
 on:
   push:
